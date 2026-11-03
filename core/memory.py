@@ -9,6 +9,7 @@ import logging
 from datetime import datetime
 from pathlib import Path
 from typing import List, Dict, Any, Optional
+from contextlib import contextmanager
 
 from config import DB_PATH
 
@@ -20,14 +21,19 @@ class MemoryManager:
         self.db_path = db_path
         self._init_db()
 
-    def _get_connection(self) -> sqlite3.Connection:
+    @contextmanager
+    def _connection(self):
+        """Context manager that guarantees connection closing."""
         conn = sqlite3.connect(self.db_path, timeout=10.0)
         conn.row_factory = sqlite3.Row
-        return conn
+        try:
+            yield conn
+        finally:
+            conn.close()
 
     def _init_db(self):
         """Initialize database tables for conversations and persistent facts."""
-        with self._get_connection() as conn:
+        with self._connection() as conn:
             cursor = conn.cursor()
             
             # Chat history table
@@ -68,7 +74,7 @@ class MemoryManager:
         tool_calls_json = json.dumps(tool_calls) if tool_calls else None
         tool_results_json = json.dumps(tool_results) if tool_results else None
 
-        with self._get_connection() as conn:
+        with self._connection() as conn:
             cursor = conn.cursor()
             cursor.execute(
                 """
@@ -82,7 +88,7 @@ class MemoryManager:
 
     def get_session_history(self, session_id: str, limit: int = 50) -> List[Dict[str, Any]]:
         """Retrieve recent chat history for a session."""
-        with self._get_connection() as conn:
+        with self._connection() as conn:
             cursor = conn.cursor()
             cursor.execute(
                 """
@@ -112,14 +118,14 @@ class MemoryManager:
 
     def clear_session(self, session_id: str):
         """Clear all conversation messages in a given session."""
-        with self._get_connection() as conn:
+        with self._connection() as conn:
             cursor = conn.cursor()
             cursor.execute("DELETE FROM messages WHERE session_id = ?", (session_id,))
             conn.commit()
 
     def clear_all_history(self):
         """Clear all conversation history across all sessions."""
-        with self._get_connection() as conn:
+        with self._connection() as conn:
             cursor = conn.cursor()
             cursor.execute("DELETE FROM messages")
             conn.commit()
@@ -128,7 +134,7 @@ class MemoryManager:
     def set_fact(self, key: str, value: str):
         """Save or update a long term memory fact."""
         timestamp = datetime.now().isoformat()
-        with self._get_connection() as conn:
+        with self._connection() as conn:
             cursor = conn.cursor()
             cursor.execute(
                 """
@@ -142,7 +148,7 @@ class MemoryManager:
 
     def get_fact(self, key: str, default: Optional[str] = None) -> Optional[str]:
         """Retrieve a specific long term memory fact."""
-        with self._get_connection() as conn:
+        with self._connection() as conn:
             cursor = conn.cursor()
             cursor.execute("SELECT value FROM long_term_memory WHERE key = ?", (key,))
             row = cursor.fetchone()
@@ -150,7 +156,7 @@ class MemoryManager:
 
     def get_all_facts(self) -> Dict[str, str]:
         """Retrieve all stored long-term memory facts."""
-        with self._get_connection() as conn:
+        with self._connection() as conn:
             cursor = conn.cursor()
             cursor.execute("SELECT key, value FROM long_term_memory")
             rows = cursor.fetchall()
